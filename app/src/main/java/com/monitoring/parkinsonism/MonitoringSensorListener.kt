@@ -21,6 +21,8 @@ import java.util.Timer
 import java.util.TimerTask
 import org.jtransforms.fft.DoubleFFT_1D
 import kotlin.math.*
+import java.time.Instant
+import java.util.ArrayDeque
 
 class MonitoringSensorListener(private val context: Context) : SensorEventListener {
 
@@ -80,13 +82,15 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
     private var SpeedGate: Long = 0 // toto je ciselny graf
     private var tremorIsOccuring: Long = 0 // toto je "boolean" graf, ktory nie je boolean ale ciselny
 
-
-
     private var lastGpsLocation: Location? = null
     private var lastGpsTimestamp: Long = 0
     private var lastStepCount: Int = 0
     private var stepLength: Double = 0.75
 
+
+    val bufferSize = 3000
+    val dataBuffer = ArrayDeque<Sample>(bufferSize)
+    data class Sample(val timestamp: Long, val x: Double, val y: Double, val z: Double)
 
     init {
         startAllSedingTasks()
@@ -95,7 +99,6 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
         } ?: run {
             Toast.makeText(context, "Accelerometer Sensor not available", Toast.LENGTH_SHORT).show()
         }
-
         heartRateSensor?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_UI)
         } ?: run {
@@ -129,9 +132,8 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
     }
 
     companion object {
-        private const val LOCATION_PERMISSION_REQUEST_CODE = 1001
+        const val LOCATION_PERMISSION_REQUEST_CODE = 1001
     }
-
 
     override fun onSensorChanged(event: SensorEvent?) {
         event?.let {
@@ -189,7 +191,6 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
                 sendATremorMessage()
             }
         }, 0, 5000)
-
     }
 
     override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
@@ -259,10 +260,19 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
         dataClient.putDataItem(dataRequest).addOnSuccessListener { Log.d("dataLayer", "Poslanie bolo uspesne") }.addOnFailureListener{Log.d("dataLayer", "Poslanie zluhalo")}
     }
 
+    fun ulozVzorku(x: Double, y: Double, z: Double) {
+        val timestamp = Instant.now().toEpochMilli() // Aktuálny timestamp v milisekundách
+        if (dataBuffer.size >= bufferSize) {
+            dataBuffer.removeFirst() // Odstráni najstaršiu vzorku, ak buffer presiahne limit
+        }
+        dataBuffer.addLast(Sample(timestamp, x, y, z)) // Pridanie novej vzorky
+    }
+
     private fun handleAccelerometerData(event: SensorEvent) {
         val (x, y, z) = event.values // Zrýchlenie v osiach X, Y, Z (m/s²)
 
-        Toast.makeText(context, "X: $x Y: $y Z: $z", Toast.LENGTH_SHORT).show()
+        ulozVzorku(x.toDouble(), y.toDouble(), z.toDouble())
+        //Toast.makeText(context, "X: $x Y: $y Z: $z", Toast.LENGTH_SHORT).show()
         sendMessage(x, y, z)
 
         // Vypočítame veľkosť zrýchlenia ako vektorovú dĺžku
@@ -298,7 +308,7 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
 
     private fun handleHeartRateData(event: SensorEvent) {
         heartRate = event.values[0]
-        Toast.makeText(context, "heartRate: $heartRate", Toast.LENGTH_SHORT).show()
+        //Toast.makeText(context, "heartRate: $heartRate", Toast.LENGTH_SHORT).show()
         val currentTime = System.currentTimeMillis()
         val currentDate = LocalDate.now()
 
@@ -324,10 +334,9 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
             }
         }
 
-        val isTemperatureDrop = lastTemperature?.let { it - event.values[0] >= 0.2 } ?: false
         // spí
-        if (isStationary && heartRate in 40f..70f && isTemperatureDrop) {
-            Toast.makeText(context, "User is likely sleeping (HR: $heartRate BPM)", Toast.LENGTH_SHORT).show()
+        if (isStationary && heartRate in 40f..70f) {
+            //Toast.makeText(context, "User is likely sleeping (HR: $heartRate BPM)", Toast.LENGTH_SHORT).show()
             if (!isSleeping) {
                 isSleeping = true
                 sleepStartTime = currentTime
@@ -348,7 +357,7 @@ class MonitoringSensorListener(private val context: Context) : SensorEventListen
 
         // má off-freezing
         if (isStationary && heartRate > 70f) {
-            Toast.makeText(context, "User is likely off-freezed (HR: $heartRate BPM)", Toast.LENGTH_SHORT).show()
+            //Toast.makeText(context, "User is likely off-freezed (HR: $heartRate BPM)", Toast.LENGTH_SHORT).show()
             offFreezingState = true;
         } else{
             offFreezingState = false;
